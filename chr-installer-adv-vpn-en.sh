@@ -335,13 +335,20 @@ if [[ "$BOOT_MODE" == "UEFI" ]]; then
     
     CHR_IMG_UEFI="${CHR_IMG%.img}-uefi.img"
     
-    PART1_START=$(fdisk -l "$CHR_IMG" 2>/dev/null | grep "${CHR_IMG}1" | awk '{print $2}')
-    PART1_END=$(fdisk -l "$CHR_IMG" 2>/dev/null | grep "${CHR_IMG}1" | awk '{print $3}')
+    # Remove boot flag (*) so columns don't shift
+    PART1_START=$(fdisk -l "$CHR_IMG" 2>/dev/null | grep "${CHR_IMG}1" | sed 's/\*//' | awk '{print $2}')
+    PART1_END=$(fdisk -l "$CHR_IMG" 2>/dev/null | grep "${CHR_IMG}1" | sed 's/\*//' | awk '{print $3}')
     PART1_SECTORS=$((PART1_END - PART1_START + 1))
     
-    PART2_START=$(fdisk -l "$CHR_IMG" 2>/dev/null | grep "${CHR_IMG}2" | awk '{print $2}')
-    PART2_END=$(fdisk -l "$CHR_IMG" 2>/dev/null | grep "${CHR_IMG}2" | awk '{print $3}')
+    PART2_START=$(fdisk -l "$CHR_IMG" 2>/dev/null | grep "${CHR_IMG}2" | sed 's/\*//' | awk '{print $2}')
+    PART2_END=$(fdisk -l "$CHR_IMG" 2>/dev/null | grep "${CHR_IMG}2" | sed 's/\*//' | awk '{print $3}')
     PART2_SECTORS=$((PART2_END - PART2_START + 1))
+    
+    # Check that values were obtained
+    if [[ -z "$PART1_START" || -z "$PART2_START" ]]; then
+        log_error "Failed to determine image partitions"
+        exit 1
+    fi
     
     ESP_SECTORS=69632
     TOTAL_SECTORS=$((2048 + ESP_SECTORS + PART1_SECTORS + PART2_SECTORS + 34))
