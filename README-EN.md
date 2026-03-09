@@ -55,6 +55,7 @@ Deploy CHR for:
 - Minimum 128 MB RAM (256 MB+ recommended)
 - At least 128 MB disk space
 - Active internet connection
+- **Both boot modes supported**: Legacy BIOS and UEFI
 
 ## 🚀 Quick Start
 

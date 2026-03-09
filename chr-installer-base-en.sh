@@ -143,11 +143,27 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # ============================================
+# BOOT MODE DETECTION (UEFI/LEGACY)
+# ============================================
+if [[ -d /sys/firmware/efi ]]; then
+    BOOT_MODE="UEFI"
+    log_info "Boot mode: UEFI"
+else
+    BOOT_MODE="LEGACY"
+    log_info "Boot mode: Legacy BIOS"
+fi
+
+# ============================================
 # DEPENDENCY CHECK
 # ============================================
 log_info "Checking dependencies..."
 
 REQUIRED_TOOLS="wget unzip fdisk dd mount umount file md5sum xxd"
+
+if [[ "$BOOT_MODE" == "UEFI" ]]; then
+    REQUIRED_TOOLS="$REQUIRED_TOOLS parted mkfs.vfat"
+fi
+
 MISSING_TOOLS=""
 
 for tool in $REQUIRED_TOOLS; do
@@ -159,13 +175,13 @@ done
 if [[ -n "$MISSING_TOOLS" ]]; then
     log_warn "Missing tools:$MISSING_TOOLS"
     log_info "Attempting to install..."
-    
+
     if command -v apt-get &> /dev/null; then
-        apt-get update && apt-get install -y wget unzip fdisk coreutils mount xxd
+        apt-get update && apt-get install -y wget unzip fdisk coreutils mount xxd file parted dosfstools
     elif command -v yum &> /dev/null; then
-        yum install -y wget unzip util-linux coreutils vim-common
+        yum install -y wget unzip util-linux coreutils vim-common file parted dosfstools
     elif command -v dnf &> /dev/null; then
-        dnf install -y wget unzip util-linux coreutils vim-common
+        dnf install -y wget unzip util-linux coreutils vim-common file parted dosfstools
     else
         log_error "Please install manually:$MISSING_TOOLS"
         exit 1
@@ -247,6 +263,90 @@ ORIGINAL_MD5=$(md5sum "$CHR_IMG" | awk '{print $1}')
 log_info "Original image MD5: $ORIGINAL_MD5"
 
 log_info "Image validation passed ✓"
+
+# ============================================
+# UEFI CONVERSION (if needed)
+# ============================================
+if [[ "$BOOT_MODE" == "UEFI" ]]; then
+    log_info "Converting image for UEFI..."
+    
+    CHR_IMG_UEFI="${CHR_IMG%.img}-uefi.img"
+    
+    PART1_START=$(fdisk -l "$CHR_IMG" 2>/dev/null | grep "${CHR_IMG}1" | awk '{print $2}')
+    PART1_END=$(fdisk -l "$CHR_IMG" 2>/dev/null | grep "${CHR_IMG}1" | awk '{print $3}')
+    PART1_SECTORS=$((PART1_END - PART1_START + 1))
+    
+    PART2_START=$(fdisk -l "$CHR_IMG" 2>/dev/null | grep "${CHR_IMG}2" | awk '{print $2}')
+    PART2_END=$(fdisk -l "$CHR_IMG" 2>/dev/null | grep "${CHR_IMG}2" | awk '{print $3}')
+    PART2_SECTORS=$((PART2_END - PART2_START + 1))
+    
+    ESP_SECTORS=69632
+    TOTAL_SECTORS=$((2048 + ESP_SECTORS + PART1_SECTORS + PART2_SECTORS + 34))
+    NEW_IMG_SIZE=$((TOTAL_SECTORS * 512))
+    
+    log_debug "Creating UEFI image of $((NEW_IMG_SIZE / 1024 / 1024)) MB"
+    
+    dd if=/dev/zero of="$CHR_IMG_UEFI" bs=1M count=$((NEW_IMG_SIZE / 1024 / 1024 + 1)) status=none
+    
+    parted -s "$CHR_IMG_UEFI" mklabel gpt
+    
+    ESP_START=2048
+    ESP_END=$((ESP_START + ESP_SECTORS - 1))
+    parted -s "$CHR_IMG_UEFI" mkpart primary fat32 ${ESP_START}s ${ESP_END}s
+    parted -s "$CHR_IMG_UEFI" set 1 esp on
+    parted -s "$CHR_IMG_UEFI" set 1 boot on
+    
+    BOOT_START=$((ESP_END + 1))
+    BOOT_END=$((BOOT_START + PART1_SECTORS - 1))
+    parted -s "$CHR_IMG_UEFI" mkpart primary ext4 ${BOOT_START}s ${BOOT_END}s
+    
+    ROOT_START=$((BOOT_END + 1))
+    ROOT_END=$((ROOT_START + PART2_SECTORS - 1))
+    parted -s "$CHR_IMG_UEFI" mkpart primary ext4 ${ROOT_START}s ${ROOT_END}s
+    
+    log_debug "Copying partitions from original image..."
+    
+    dd if="$CHR_IMG" of="$CHR_IMG_UEFI" bs=512 skip=$PART1_START seek=$BOOT_START count=$PART1_SECTORS conv=notrunc status=none
+    dd if="$CHR_IMG" of="$CHR_IMG_UEFI" bs=512 skip=$PART2_START seek=$ROOT_START count=$PART2_SECTORS conv=notrunc status=none
+    
+    log_debug "Creating EFI partition..."
+    
+    LOOP_DEV=$(losetup -f --show -o $((ESP_START * 512)) --sizelimit $((ESP_SECTORS * 512)) "$CHR_IMG_UEFI")
+    mkfs.vfat -F 32 -n "EFI" "$LOOP_DEV" >/dev/null 2>&1
+    
+    ESP_MOUNT="/mnt/chr-esp"
+    mkdir -p "$ESP_MOUNT"
+    mount "$LOOP_DEV" "$ESP_MOUNT"
+    
+    BOOT_LOOP=$(losetup -f --show -o $((PART1_START * 512)) --sizelimit $((PART1_SECTORS * 512)) "$CHR_IMG")
+    BOOT_MOUNT="/mnt/chr-boot"
+    mkdir -p "$BOOT_MOUNT"
+    mount -o ro "$BOOT_LOOP" "$BOOT_MOUNT"
+    
+    if [[ -d "$BOOT_MOUNT/EFI" ]]; then
+        cp -r "$BOOT_MOUNT/EFI" "$ESP_MOUNT/"
+        log_debug "EFI files copied from image"
+    else
+        mkdir -p "$ESP_MOUNT/EFI/BOOT"
+        if [[ -f "$BOOT_MOUNT/vmlinuz" ]]; then
+            cp "$BOOT_MOUNT/vmlinuz" "$ESP_MOUNT/EFI/BOOT/BOOTX64.EFI"
+            log_debug "Created EFI bootloader from vmlinuz"
+        fi
+    fi
+    
+    umount "$BOOT_MOUNT" 2>/dev/null || true
+    losetup -d "$BOOT_LOOP" 2>/dev/null || true
+    umount "$ESP_MOUNT" 2>/dev/null || true
+    losetup -d "$LOOP_DEV" 2>/dev/null || true
+    rmdir "$ESP_MOUNT" 2>/dev/null || true
+    rmdir "$BOOT_MOUNT" 2>/dev/null || true
+    
+    CHR_IMG="$CHR_IMG_UEFI"
+    
+    log_info "UEFI image created ✓"
+    log_debug "New partition table:"
+    parted -s "$CHR_IMG" print 2>/dev/null || fdisk -l "$CHR_IMG" 2>/dev/null | head -20
+fi
 
 # ============================================
 # NETWORK PARAMETERS DETECTION
@@ -338,14 +438,24 @@ cp "$CHR_IMG" "$CHR_IMG_MOD"
 
 mkdir -p "$MOUNT_POINT"
 
-OFFSET_SECTORS=$(fdisk -l "$CHR_IMG_MOD" 2>/dev/null | grep "${CHR_IMG_MOD}2" | awk '{print $2}')
+if [[ "$BOOT_MODE" == "UEFI" ]]; then
+    ROOT_PART_NUM=3
+else
+    ROOT_PART_NUM=2
+fi
+
+OFFSET_SECTORS=$(fdisk -l "$CHR_IMG_MOD" 2>/dev/null | grep "${CHR_IMG_MOD}${ROOT_PART_NUM}" | awk '{print $2}')
 if [[ -z "$OFFSET_SECTORS" ]]; then
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        log_error "Failed to determine offset for UEFI image"
+        exit 1
+    fi
     OFFSET_BYTES=33571840
 else
     OFFSET_BYTES=$((OFFSET_SECTORS * 512))
 fi
 
-log_debug "Mounting with offset: $OFFSET_BYTES"
+log_debug "Mounting partition $ROOT_PART_NUM with offset: $OFFSET_BYTES"
 
 mount -o loop,offset="$OFFSET_BYTES" "$CHR_IMG_MOD" "$MOUNT_POINT"
 
@@ -447,6 +557,7 @@ echo "============================================"
 echo ""
 echo "Image:    $FINAL_IMG"
 echo "Disk:     $DISK_DEVICE ($DISK_SIZE)"
+echo "Mode:     $BOOT_MODE"
 echo "IP:       $ADDRESS"
 echo "Gateway:  $GATEWAY"
 echo "Name:     $ROUTER_NAME"
