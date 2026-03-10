@@ -154,10 +154,10 @@ fi
 
 # Set URL based on boot mode
 if [[ "$BOOT_MODE" == "UEFI" ]]; then
-    # UEFI image from https://github.com/tikoci/fat-chr
-    CHR_URL="https://github.com/tikoci/fat-chr/releases/download/${CHR_VERSION}/chr-${CHR_VERSION}.uefi-fat.raw"
-    CHR_IMG="chr-${CHR_VERSION}.uefi-fat.raw"
-    CHR_ZIP=""
+    # UEFI image from https://github.com/tikoci/fat-chr (GPT + EFI)
+    CHR_URL="https://github.com/tikoci/fat-chr/releases/download/${CHR_VERSION}/chr-${CHR_VERSION}.img.zip"
+    CHR_ZIP="chr-${CHR_VERSION}.img.zip"
+    CHR_IMG="chr-${CHR_VERSION}.img"
 else
     # Official MikroTik image for Legacy BIOS
     CHR_URL="https://download.mikrotik.com/routeros/${CHR_VERSION}/chr-${CHR_VERSION}.img.zip"
@@ -215,47 +215,36 @@ if [[ "$FORCE_DOWNLOAD" == true ]] || [[ ! -f "$CHR_IMG" ]]; then
 
     log_info "Downloading CHR ${CHR_VERSION} ($BOOT_MODE)..."
     
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        # UEFI: download RAW image directly
-        wget --progress=bar:force -O "$CHR_IMG" "$CHR_URL"
-        
-        ACTUAL_SIZE=$(stat -c%s "$CHR_IMG")
-        log_debug "Downloaded file size: $ACTUAL_SIZE bytes"
-        
-        if [[ $ACTUAL_SIZE -lt 30000000 ]]; then
-            log_error "File too small, download incomplete"
-            log_error "Version $CHR_VERSION may not be available for UEFI"
+    # Download ZIP and extract (same for Legacy and UEFI)
+    wget --progress=bar:force -O "$CHR_ZIP" "$CHR_URL"
+
+    ACTUAL_SIZE=$(stat -c%s "$CHR_ZIP")
+    log_debug "Downloaded file size: $ACTUAL_SIZE bytes"
+
+    if [[ $ACTUAL_SIZE -lt 30000000 ]]; then
+        log_error "File too small, download incomplete"
+        if [[ "$BOOT_MODE" == "UEFI" ]]; then
+            log_error "Version $CHR_VERSION may not be available for UEFI (fat-chr)"
             log_info "Try --legacy or a different version"
-            exit 1
         fi
-    else
-        # Legacy: download ZIP and extract
-        wget --progress=bar:force -O "$CHR_ZIP" "$CHR_URL"
-
-        ACTUAL_SIZE=$(stat -c%s "$CHR_ZIP")
-        log_debug "Downloaded file size: $ACTUAL_SIZE bytes"
-
-        if [[ $ACTUAL_SIZE -lt 30000000 ]]; then
-            log_error "File too small, download incomplete"
-            exit 1
-        fi
-
-        FILE_TYPE=$(file "$CHR_ZIP")
-        log_debug "File type: $FILE_TYPE"
-
-        if echo "$FILE_TYPE" | grep -q "Zip archive"; then
-            log_info "Extracting ZIP..."
-            unzip -o "$CHR_ZIP"
-        elif echo "$FILE_TYPE" | grep -q "gzip"; then
-            log_info "Extracting GZIP..."
-            gunzip -c "$CHR_ZIP" > "$CHR_IMG"
-        else
-            log_error "Unknown format: $FILE_TYPE"
-            exit 1
-        fi
-
-        rm -f "$CHR_ZIP"
+        exit 1
     fi
+
+    FILE_TYPE=$(file "$CHR_ZIP")
+    log_debug "File type: $FILE_TYPE"
+
+    if echo "$FILE_TYPE" | grep -q "Zip archive"; then
+        log_info "Extracting ZIP..."
+        unzip -o "$CHR_ZIP"
+    elif echo "$FILE_TYPE" | grep -q "gzip"; then
+        log_info "Extracting GZIP..."
+        gunzip -c "$CHR_ZIP" > "$CHR_IMG"
+    else
+        log_error "Unknown format: $FILE_TYPE"
+        exit 1
+    fi
+
+    rm -f "$CHR_ZIP"
 else
     log_info "Using existing image: $CHR_IMG"
 fi

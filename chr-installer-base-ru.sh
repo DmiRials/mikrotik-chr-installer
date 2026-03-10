@@ -163,9 +163,10 @@ fi
 
 # Установка URL в зависимости от режима загрузки
 if [[ "$BOOT_MODE" == "UEFI" ]]; then
-    CHR_URL="https://github.com/tikoci/fat-chr/releases/download/${CHR_VERSION}/chr-${CHR_VERSION}.uefi-fat.raw"
-    CHR_IMG="chr-${CHR_VERSION}.uefi-fat.raw"
-    CHR_ZIP=""
+    # UEFI образ с https://github.com/tikoci/fat-chr (GPT + EFI)
+    CHR_URL="https://github.com/tikoci/fat-chr/releases/download/${CHR_VERSION}/chr-${CHR_VERSION}.img.zip"
+    CHR_ZIP="chr-${CHR_VERSION}.img.zip"
+    CHR_IMG="chr-${CHR_VERSION}.img"
 else
     CHR_URL="https://download.mikrotik.com/routeros/${CHR_VERSION}/chr-${CHR_VERSION}.img.zip"
     CHR_ZIP="chr-${CHR_VERSION}.img.zip"
@@ -220,47 +221,38 @@ log_debug "Свободное место: $(df -h "$WORK_DIR" | tail -1 | awk '{
 if [[ "$FORCE_DOWNLOAD" == true ]] || [[ ! -f "$CHR_IMG" ]]; then
     rm -f "$CHR_ZIP" "$CHR_IMG" "${CHR_IMG}.modified"
     
-    log_info "Скачивание CHR ${CHR_VERSION}..."
+    log_info "Скачивание CHR ${CHR_VERSION} ($BOOT_MODE)..."
     
-    if [[ "$BOOT_MODE" == "UEFI" ]]; then
-        # UEFI: скачиваем RAW напрямую
-        wget --progress=bar:force -O "$CHR_IMG" "$CHR_URL"
-        
-        ACTUAL_SIZE=$(stat -c%s "$CHR_IMG")
-        log_debug "Размер скачанного файла: $ACTUAL_SIZE байт"
-        
-        if [[ $ACTUAL_SIZE -lt 30000000 ]]; then
-            log_error "Файл слишком маленький, скачивание неполное"
-            exit 1
+    # Скачиваем ZIP и распаковываем (одинаково для Legacy и UEFI)
+    wget --progress=bar:force -O "$CHR_ZIP" "$CHR_URL"
+    
+    ACTUAL_SIZE=$(stat -c%s "$CHR_ZIP")
+    log_debug "Размер скачанного файла: $ACTUAL_SIZE байт"
+    
+    if [[ $ACTUAL_SIZE -lt 30000000 ]]; then
+        log_error "Файл слишком маленький, скачивание неполное"
+        if [[ "$BOOT_MODE" == "UEFI" ]]; then
+            log_error "Возможно, версия $CHR_VERSION недоступна для UEFI (fat-chr)"
+            log_info "Попробуйте --legacy или другую версию"
         fi
-    else
-        # Legacy: скачиваем ZIP
-        wget --progress=bar:force -O "$CHR_ZIP" "$CHR_URL"
-        
-        ACTUAL_SIZE=$(stat -c%s "$CHR_ZIP")
-        log_debug "Размер скачанного файла: $ACTUAL_SIZE байт"
-        
-        if [[ $ACTUAL_SIZE -lt 30000000 ]]; then
-            log_error "Файл слишком маленький, скачивание неполное"
-            exit 1
-        fi
-        
-        FILE_TYPE=$(file "$CHR_ZIP")
-        log_debug "Тип файла: $FILE_TYPE"
-        
-        if echo "$FILE_TYPE" | grep -q "Zip archive"; then
-            log_info "Распаковка ZIP..."
-            unzip -o "$CHR_ZIP"
-        elif echo "$FILE_TYPE" | grep -q "gzip"; then
-            log_info "Распаковка GZIP..."
-            gunzip -c "$CHR_ZIP" > "$CHR_IMG"
-        else
-            log_error "Неизвестный формат: $FILE_TYPE"
-            exit 1
-        fi
-        
-        rm -f "$CHR_ZIP"
+        exit 1
     fi
+    
+    FILE_TYPE=$(file "$CHR_ZIP")
+    log_debug "Тип файла: $FILE_TYPE"
+    
+    if echo "$FILE_TYPE" | grep -q "Zip archive"; then
+        log_info "Распаковка ZIP..."
+        unzip -o "$CHR_ZIP"
+    elif echo "$FILE_TYPE" | grep -q "gzip"; then
+        log_info "Распаковка GZIP..."
+        gunzip -c "$CHR_ZIP" > "$CHR_IMG"
+    else
+        log_error "Неизвестный формат: $FILE_TYPE"
+        exit 1
+    fi
+    
+    rm -f "$CHR_ZIP"
 else
     log_info "Используется существующий образ: $CHR_IMG"
 fi
