@@ -688,7 +688,7 @@ echo ""
 if [[ "$AUTO_YES" == true ]]; then
     log_warn "Автоматический режим (--yes), продолжаем без подтверждения..."
 else
-    read -p "Введи 'YES' для продолжения: " confirm
+    read -p "Введи 'YES' для продолжения: " confirm < /dev/tty
     if [[ "$confirm" != "YES" ]]; then
         log_info "Отменено"
         exit 0
@@ -754,7 +754,7 @@ if [[ "$AUTO_YES" == true && "$AUTO_REBOOT" == true ]]; then
 elif [[ "$AUTO_YES" == true ]]; then
     log_info "Перезагрузи вручную: reboot"
 else
-    read -p "Перезагрузить сейчас? (y/n): " do_reboot
+    read -p "Перезагрузить сейчас? (y/n): " do_reboot < /dev/tty
     if [[ "$do_reboot" == "y" ]]; then
         log_info "Перезагрузка..."
         sleep 2
