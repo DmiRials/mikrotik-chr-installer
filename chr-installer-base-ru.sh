@@ -30,7 +30,7 @@ sanitize_input() {
 # ============================================
 # КОНФИГУРАЦИЯ
 # ============================================
-CHR_VERSION="7.21.3"
+CHR_VERSION="7.16.1"
 # URL будет установлен после определения режима загрузки (UEFI/Legacy)
 CHR_URL=""
 CHR_ZIP=""
@@ -163,10 +163,11 @@ fi
 
 # Установка URL в зависимости от режима загрузки
 if [[ "$BOOT_MODE" == "UEFI" ]]; then
-    # UEFI образ с https://github.com/tikoci/fat-chr (GPT + EFI)
-    CHR_URL="https://github.com/tikoci/fat-chr/releases/download/${CHR_VERSION}/chr-${CHR_VERSION}.img.zip"
-    CHR_ZIP="chr-${CHR_VERSION}.img.zip"
-    CHR_IMG="chr-${CHR_VERSION}.img"
+    # UEFI образ fat-chr 7.16 (проверенный, autorun.scr работает)
+    CHR_URL="https://github.com/tikoci/fat-chr/releases/download/Build11085703131-jaclaz/chr-7.16.uefi-fat-jaclaz.raw"
+    CHR_ZIP=""
+    CHR_IMG="chr-7.16.uefi-fat.raw"
+    log_info "UEFI: используется fat-chr 7.16 (autorun.scr поддерживается)"
 else
     CHR_URL="https://download.mikrotik.com/routeros/${CHR_VERSION}/chr-${CHR_VERSION}.img.zip"
     CHR_ZIP="chr-${CHR_VERSION}.img.zip"
@@ -220,44 +221,48 @@ log_debug "Свободное место: $(df -h "$WORK_DIR" | tail -1 | awk '{
 # ============================================
 if [[ "$FORCE_DOWNLOAD" == true ]] || [[ ! -f "$CHR_IMG" ]]; then
     rm -f "$CHR_ZIP" "$CHR_IMG" "${CHR_IMG}.modified"
-    
-    log_info "Скачивание CHR ${CHR_VERSION} ($BOOT_MODE)..."
-    
-    # Скачиваем ZIP и распаковываем (одинаково для Legacy и UEFI)
-    wget --progress=bar:force -O "$CHR_ZIP" "$CHR_URL"
-    
-    ACTUAL_SIZE=$(stat -c%s "$CHR_ZIP")
-    log_debug "Размер скачанного файла: $ACTUAL_SIZE байт"
-    
-    if [[ $ACTUAL_SIZE -lt 30000000 ]]; then
-        log_error "Файл слишком маленький, скачивание неполное"
-        if [[ "$BOOT_MODE" == "UEFI" ]]; then
-            log_error "Возможно, версия $CHR_VERSION недоступна для UEFI (fat-chr)"
-            log_info "Попробуйте --legacy или другую версию"
+
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        # UEFI: скачиваем RAW образ напрямую
+        log_info "Скачивание fat-chr 7.16 (UEFI)..."
+        wget --progress=bar:force -O "$CHR_IMG" "$CHR_URL"
+        
+        ACTUAL_SIZE=$(stat -c%s "$CHR_IMG")
+        log_debug "Размер скачанного файла: $ACTUAL_SIZE байт"
+        
+        if [[ $ACTUAL_SIZE -lt 100000000 ]]; then
+            log_error "Файл слишком маленький, скачивание неполное"
+            exit 1
         fi
-        exit 1
-    fi
-    
-    FILE_TYPE=$(file "$CHR_ZIP")
-    log_debug "Тип файла: $FILE_TYPE"
-    
-    if echo "$FILE_TYPE" | grep -q "Zip archive"; then
-        log_info "Распаковка ZIP..."
-        unzip -o "$CHR_ZIP"
-        # fat-chr архивы содержат chr-efi.img вместо chr-VERSION.img
-        if [[ "$BOOT_MODE" == "UEFI" ]] && [[ -f "chr-efi.img" ]] && [[ ! -f "$CHR_IMG" ]]; then
-            mv "chr-efi.img" "$CHR_IMG"
-            log_debug "Переименован chr-efi.img -> $CHR_IMG"
-        fi
-    elif echo "$FILE_TYPE" | grep -q "gzip"; then
-        log_info "Распаковка GZIP..."
-        gunzip -c "$CHR_ZIP" > "$CHR_IMG"
     else
-        log_error "Неизвестный формат: $FILE_TYPE"
-        exit 1
+        # Legacy: скачиваем ZIP и распаковываем
+        log_info "Скачивание CHR ${CHR_VERSION} (Legacy)..."
+        wget --progress=bar:force -O "$CHR_ZIP" "$CHR_URL"
+
+        ACTUAL_SIZE=$(stat -c%s "$CHR_ZIP")
+        log_debug "Размер скачанного файла: $ACTUAL_SIZE байт"
+
+        if [[ $ACTUAL_SIZE -lt 30000000 ]]; then
+            log_error "Файл слишком маленький, скачивание неполное"
+            exit 1
+        fi
+
+        FILE_TYPE=$(file "$CHR_ZIP")
+        log_debug "Тип файла: $FILE_TYPE"
+
+        if echo "$FILE_TYPE" | grep -q "Zip archive"; then
+            log_info "Распаковка ZIP..."
+            unzip -o "$CHR_ZIP"
+        elif echo "$FILE_TYPE" | grep -q "gzip"; then
+            log_info "Распаковка GZIP..."
+            gunzip -c "$CHR_ZIP" > "$CHR_IMG"
+        else
+            log_error "Неизвестный формат: $FILE_TYPE"
+            exit 1
+        fi
+
+        rm -f "$CHR_ZIP"
     fi
-    
-    rm -f "$CHR_ZIP"
 else
     log_info "Используется существующий образ: $CHR_IMG"
 fi
@@ -384,17 +389,9 @@ mkdir -p "$MOUNT_POINT"
 log_debug "Структура разделов образа:"
 fdisk -l "$CHR_IMG_MOD" 2>/dev/null | head -20 || true
 
-# Определение номера раздела с данными
-# fat-chr UEFI: 3 раздела (EFI, boot, root) - нужен раздел 3
-# Legacy MikroTik: 2 раздела (boot, root) - нужен раздел 2
-PART_COUNT=$(fdisk -l "$CHR_IMG_MOD" 2>/dev/null | grep "^${CHR_IMG_MOD}" | wc -l)
-if [[ "$BOOT_MODE" == "UEFI" ]] && [[ "$PART_COUNT" -ge 3 ]]; then
-    ROOT_PART_NUM=3
-    log_debug "UEFI образ с $PART_COUNT разделами, используем раздел $ROOT_PART_NUM"
-else
-    ROOT_PART_NUM=2
-    log_debug "Legacy образ, используем раздел $ROOT_PART_NUM"
-fi
+# fat-chr 7.16 и Legacy MikroTik: раздел 2 (Linux filesystem)
+ROOT_PART_NUM=2
+log_debug "Используем раздел $ROOT_PART_NUM"
 
 OFFSET_SECTORS=$(fdisk -l "$CHR_IMG_MOD" 2>/dev/null | grep "${CHR_IMG_MOD}${ROOT_PART_NUM}" | sed 's/\*//' | awk '{print $2}')
 if [[ -z "$OFFSET_SECTORS" ]]; then
@@ -525,7 +522,7 @@ echo ""
 if [[ "$AUTO_YES" == true ]]; then
     log_warn "Автоматический режим (--yes), продолжаем без подтверждения..."
 else
-    read -p "Введи 'YES' для продолжения: " confirm
+    read -p "Введи 'YES' для продолжения: " confirm < /dev/tty
     if [[ "$confirm" != "YES" ]]; then
         log_info "Отменено"
         exit 0
@@ -543,7 +540,7 @@ echo 1 > /proc/sys/kernel/sysrq
 echo u > /proc/sysrq-trigger
 sleep 2
 
-dd if="$FINAL_IMG" of="$DISK_DEVICE" bs=4M oflag=direct status=progress
+dd if="$FINAL_IMG" of="$DISK_DEVICE" bs=4M oflag=sync status=progress
 
 log_info "Запись завершена"
 
@@ -578,7 +575,7 @@ if [[ "$AUTO_YES" == true && "$AUTO_REBOOT" == true ]]; then
 elif [[ "$AUTO_YES" == true ]]; then
     log_info "Перезагрузи вручную: reboot"
 else
-    read -p "Перезагрузить сейчас? (y/n): " do_reboot
+    read -p "Перезагрузить сейчас? (y/n): " do_reboot < /dev/tty
     if [[ "$do_reboot" == "y" ]]; then
         log_info "Перезагрузка..."
         sleep 2

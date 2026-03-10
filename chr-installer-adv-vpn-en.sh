@@ -39,7 +39,7 @@ sanitize_input() {
 # ============================================
 # CONFIGURATION
 # ============================================
-CHR_VERSION="7.21.3"
+CHR_VERSION="7.16.1"
 # URL will be set after boot mode detection (UEFI/Legacy)
 CHR_URL=""
 CHR_ZIP=""
@@ -229,10 +229,11 @@ fi
 
 # Set URL based on boot mode
 if [[ "$BOOT_MODE" == "UEFI" ]]; then
-    # UEFI image from https://github.com/tikoci/fat-chr (GPT + EFI)
-    CHR_URL="https://github.com/tikoci/fat-chr/releases/download/${CHR_VERSION}/chr-${CHR_VERSION}.img.zip"
-    CHR_ZIP="chr-${CHR_VERSION}.img.zip"
-    CHR_IMG="chr-${CHR_VERSION}.img"
+    # UEFI image fat-chr 7.16 (tested, autorun.scr works)
+    CHR_URL="https://github.com/tikoci/fat-chr/releases/download/Build11085703131-jaclaz/chr-7.16.uefi-fat-jaclaz.raw"
+    CHR_ZIP=""
+    CHR_IMG="chr-7.16.uefi-fat.raw"
+    log_info "UEFI: using fat-chr 7.16 (autorun.scr supported)"
 else
     # Official MikroTik image for Legacy BIOS
     CHR_URL="https://download.mikrotik.com/routeros/${CHR_VERSION}/chr-${CHR_VERSION}.img.zip"
@@ -288,43 +289,47 @@ log_debug "Free space: $(df -h "$WORK_DIR" | tail -1 | awk '{print $4}')"
 if [[ "$FORCE_DOWNLOAD" == true ]] || [[ ! -f "$CHR_IMG" ]]; then
     rm -f "$CHR_ZIP" "$CHR_IMG" "${CHR_IMG}.modified"
 
-    log_info "Downloading CHR ${CHR_VERSION} ($BOOT_MODE)..."
-    
-    # Download ZIP and extract (same for Legacy and UEFI)
-    wget --progress=bar:force -O "$CHR_ZIP" "$CHR_URL"
-
-    ACTUAL_SIZE=$(stat -c%s "$CHR_ZIP")
-    log_debug "Downloaded file size: $ACTUAL_SIZE bytes"
-
-    if [[ $ACTUAL_SIZE -lt 30000000 ]]; then
-        log_error "File too small, download incomplete"
-        if [[ "$BOOT_MODE" == "UEFI" ]]; then
-            log_error "Version $CHR_VERSION may not be available for UEFI (fat-chr)"
-            log_info "Try --legacy or a different version"
+    if [[ "$BOOT_MODE" == "UEFI" ]]; then
+        # UEFI: download RAW image directly
+        log_info "Downloading fat-chr 7.16 (UEFI)..."
+        wget --progress=bar:force -O "$CHR_IMG" "$CHR_URL"
+        
+        ACTUAL_SIZE=$(stat -c%s "$CHR_IMG")
+        log_debug "Downloaded file size: $ACTUAL_SIZE bytes"
+        
+        if [[ $ACTUAL_SIZE -lt 100000000 ]]; then
+            log_error "File too small, download incomplete"
+            exit 1
         fi
-        exit 1
-    fi
-
-    FILE_TYPE=$(file "$CHR_ZIP")
-    log_debug "File type: $FILE_TYPE"
-
-    if echo "$FILE_TYPE" | grep -q "Zip archive"; then
-        log_info "Extracting ZIP..."
-        unzip -o "$CHR_ZIP"
-        # fat-chr archives contain chr-efi.img instead of chr-VERSION.img
-        if [[ "$BOOT_MODE" == "UEFI" ]] && [[ -f "chr-efi.img" ]] && [[ ! -f "$CHR_IMG" ]]; then
-            mv "chr-efi.img" "$CHR_IMG"
-            log_debug "Renamed chr-efi.img -> $CHR_IMG"
-        fi
-    elif echo "$FILE_TYPE" | grep -q "gzip"; then
-        log_info "Extracting GZIP..."
-        gunzip -c "$CHR_ZIP" > "$CHR_IMG"
     else
-        log_error "Unknown format: $FILE_TYPE"
-        exit 1
-    fi
+        # Legacy: download ZIP and extract
+        log_info "Downloading CHR ${CHR_VERSION} (Legacy)..."
+        wget --progress=bar:force -O "$CHR_ZIP" "$CHR_URL"
 
-    rm -f "$CHR_ZIP"
+        ACTUAL_SIZE=$(stat -c%s "$CHR_ZIP")
+        log_debug "Downloaded file size: $ACTUAL_SIZE bytes"
+
+        if [[ $ACTUAL_SIZE -lt 30000000 ]]; then
+            log_error "File too small, download incomplete"
+            exit 1
+        fi
+
+        FILE_TYPE=$(file "$CHR_ZIP")
+        log_debug "File type: $FILE_TYPE"
+
+        if echo "$FILE_TYPE" | grep -q "Zip archive"; then
+            log_info "Extracting ZIP..."
+            unzip -o "$CHR_ZIP"
+        elif echo "$FILE_TYPE" | grep -q "gzip"; then
+            log_info "Extracting GZIP..."
+            gunzip -c "$CHR_ZIP" > "$CHR_IMG"
+        else
+            log_error "Unknown format: $FILE_TYPE"
+            exit 1
+        fi
+
+        rm -f "$CHR_ZIP"
+    fi
 else
     log_info "Using existing image: $CHR_IMG"
 fi
@@ -450,17 +455,9 @@ mkdir -p "$MOUNT_POINT"
 log_debug "Image partition structure:"
 fdisk -l "$CHR_IMG_MOD" 2>/dev/null | head -20 || true
 
-# Determine data partition number
-# fat-chr UEFI: 3 partitions (EFI, boot, root) - need partition 3
-# Legacy MikroTik: 2 partitions (boot, root) - need partition 2
-PART_COUNT=$(fdisk -l "$CHR_IMG_MOD" 2>/dev/null | grep "^${CHR_IMG_MOD}" | wc -l)
-if [[ "$BOOT_MODE" == "UEFI" ]] && [[ "$PART_COUNT" -ge 3 ]]; then
-    ROOT_PART_NUM=3
-    log_debug "UEFI image with $PART_COUNT partitions, using partition $ROOT_PART_NUM"
-else
-    ROOT_PART_NUM=2
-    log_debug "Legacy image, using partition $ROOT_PART_NUM"
-fi
+# fat-chr 7.16 and Legacy MikroTik: partition 2 (Linux filesystem)
+ROOT_PART_NUM=2
+log_debug "Using partition $ROOT_PART_NUM"
 
 OFFSET_SECTORS=$(fdisk -l "$CHR_IMG_MOD" 2>/dev/null | grep "${CHR_IMG_MOD}${ROOT_PART_NUM}" | sed 's/\*//' | awk '{print $2}')
 if [[ -z "$OFFSET_SECTORS" ]]; then
@@ -646,7 +643,7 @@ echo ""
 if [[ "$AUTO_YES" == true ]]; then
     log_warn "Automatic mode (--yes), continuing without confirmation..."
 else
-    read -p "Type 'YES' to continue: " confirm
+    read -p "Type 'YES' to continue: " confirm < /dev/tty
     if [[ "$confirm" != "YES" ]]; then
         log_info "Cancelled"
         exit 0
@@ -664,7 +661,7 @@ echo 1 > /proc/sys/kernel/sysrq
 echo u > /proc/sysrq-trigger
 sleep 2
 
-dd if="$FINAL_IMG" of="$DISK_DEVICE" bs=4M oflag=direct status=progress
+dd if="$FINAL_IMG" of="$DISK_DEVICE" bs=4M oflag=sync status=progress
 
 log_info "Write completed"
 
@@ -712,7 +709,7 @@ if [[ "$AUTO_YES" == true && "$AUTO_REBOOT" == true ]]; then
 elif [[ "$AUTO_YES" == true ]]; then
     log_info "Reboot manually: reboot"
 else
-    read -p "Reboot now? (y/n): " do_reboot
+    read -p "Reboot now? (y/n): " do_reboot < /dev/tty
     if [[ "$do_reboot" == "y" ]]; then
         log_info "Rebooting..."
         sleep 2
