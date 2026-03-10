@@ -311,6 +311,11 @@ if [[ "$FORCE_DOWNLOAD" == true ]] || [[ ! -f "$CHR_IMG" ]]; then
     if echo "$FILE_TYPE" | grep -q "Zip archive"; then
         log_info "Extracting ZIP..."
         unzip -o "$CHR_ZIP"
+        # fat-chr archives contain chr-efi.img instead of chr-VERSION.img
+        if [[ "$BOOT_MODE" == "UEFI" ]] && [[ -f "chr-efi.img" ]] && [[ ! -f "$CHR_IMG" ]]; then
+            mv "chr-efi.img" "$CHR_IMG"
+            log_debug "Renamed chr-efi.img -> $CHR_IMG"
+        fi
     elif echo "$FILE_TYPE" | grep -q "gzip"; then
         log_info "Extracting GZIP..."
         gunzip -c "$CHR_ZIP" > "$CHR_IMG"
