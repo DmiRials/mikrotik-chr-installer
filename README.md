@@ -62,14 +62,14 @@
 ### Установка одной командой
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/skurudo/mikrotik-chr-installer/main/chr-installer.sh | bash
+wget -qO- https://raw.githubusercontent.com/DmiRials/mikrotik-chr-installer/main/chr-installer.sh | bash
 ```
 
 ### Ручная установка
 
 ```bash
 # Скачать скрипт
-wget https://raw.githubusercontent.com/skurudo/mikrotik-chr-installer/main/chr-installer.sh
+wget https://raw.githubusercontent.com/DmiRials/mikrotik-chr-installer/main/chr-installer.sh
 
 # Сделать исполняемым
 chmod +x chr-installer.sh
@@ -384,27 +384,27 @@ EOF
 
 #### Базовая настройка с безопасностью (RU):
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/skurudo/mikrotik-chr-installer/main/chr-installer-base-ru.sh) --yes --reboot
+bash <(curl -sL https://raw.githubusercontent.com/DmiRials/mikrotik-chr-installer/main/chr-installer-base-ru.sh) --yes --reboot
 ```
 
 #### Базовая настройка с безопасностью (EN):
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/skurudo/mikrotik-chr-installer/main/chr-installer-base-en.sh) --yes --reboot
+bash <(curl -sL https://raw.githubusercontent.com/DmiRials/mikrotik-chr-installer/main/chr-installer-base-en.sh) --yes --reboot
 ```
 
 #### VPN-сервер со всеми протоколами (RU):
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/skurudo/mikrotik-chr-installer/main/chr-installer-adv-vpn-ru.sh) --yes --reboot
+bash <(curl -sL https://raw.githubusercontent.com/DmiRials/mikrotik-chr-installer/main/chr-installer-adv-vpn-ru.sh) --yes --reboot
 ```
 
 #### VPN-сервер со всеми протоколами (EN):
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/skurudo/mikrotik-chr-installer/main/chr-installer-adv-vpn-en.sh) --yes --reboot
+bash <(curl -sL https://raw.githubusercontent.com/DmiRials/mikrotik-chr-installer/main/chr-installer-adv-vpn-en.sh) --yes --reboot
 ```
 
 #### VPN-сервер с кастомными параметрами:
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/skurudo/mikrotik-chr-installer/main/chr-installer-adv-vpn-ru.sh) \
+bash <(curl -sL https://raw.githubusercontent.com/DmiRials/mikrotik-chr-installer/main/chr-installer-adv-vpn-ru.sh) \
   --password MyAdminPass \
   --vpn-user myuser \
   --vpn-pass MyVPNPass123 \
